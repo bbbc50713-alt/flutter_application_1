@@ -22,7 +22,13 @@
 	<!-- BDL: Photo library usage -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>需要访问相册保存报告图片</string>
-	
+
+	<!-- BDL: Background audio mode for alarm sounds -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

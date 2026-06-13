@@ -725,7 +725,20 @@ class ReportService {
       isHTML: false,
     );
 
-    await FlutterEmailSender.send(email);
+    try {
+      await FlutterEmailSender.send(email);
+    } catch (e) {
+      // Fallback to share_plus if Mail.app is not configured (common on iOS)
+      if (Platform.isIOS && e.toString().contains('not_available')) {
+        await Share.shareXFiles(
+          [XFile(file.path)],
+          subject: 'BDL Battery Discharge Test Report - ${test.batteryNumber}',
+          text: _buildEmailBody(test, provider: provider, customer: customer),
+        );
+      } else {
+        rethrow;
+      }
+    }
   }
 
   String _buildEmailBody(BatteryTest test, {ServiceProvider? provider, Customer? customer}) {

@@ -58,6 +58,16 @@ class AlarmProvider extends ChangeNotifier {
       await androidPlugin?.requestNotificationsPermission();
     }
 
+    if (Platform.isIOS) {
+      final iosPlugin = _notifications.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      await iosPlugin?.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+    }
+
     _notificationsInitialized = true;
   }
 
