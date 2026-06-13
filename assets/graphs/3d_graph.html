@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BDL 3D Discharge Graph</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    }
+    
+    #graph-container {
+      width: 100%;
+      height: 100%;
+    }
+    
+    .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #666;
+    }
+    
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #e0e0e0;
+      border-top-color: #1976d2;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="graph-container">
+    <div class="loading" id="loading">
+      <div class="loading-spinner"></div>
+      <div>Loading 3D Graph...</div>
+    </div>
+  </div>
+  
+  <script>
+    var chart = null;
+    var isReady = false;
+    var currentCellCount = 24;
+    var currentHourCount = 6;
+
+    // Patch WebGL contexts to preserve drawing buffer
+    (function() {
+      var originalGetContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+        if (type === 'webgl' || type === 'webgl2') {
+          attributes = attributes || {};
+          attributes.preserveDrawingBuffer = true;
+        }
+        return originalGetContext.call(this, type, attributes);
+      };
+    })();
+
+    function initChart() {
+      var container = document.getElementById('graph-container');
+      chart = echarts.init(container, null, {
+        renderer: 'webgl',
+        devicePixelRatio: window.devicePixelRatio || 1
+      });
+
+      chart.setOption({
+        grid3D: {},
+        xAxis3D: {},
+        yAxis3D: {},
+        zAxis3D: {}
+      });
+
+      document.getElementById('loading').style.display = 'none';
+    }
+    
+    function render3DGraph(dataJson, cellCount, hourCount) {
+      if (!chart) {
+        initChart();
+      }
+
+      try {
+        // Update dimensions if provided
+        if (cellCount !== undefined && cellCount !== null) {
+          currentCellCount = cellCount;
+        }
+        if (hourCount !== undefined && hourCount !== null) {
+          currentHourCount = hourCount;
+        }
+
+        // Validate dimensions (use reasonable bounds instead of hardcoded 24/6)
+        if (currentCellCount < 1) currentCellCount = 1;
+        if (currentCellCount > 100) currentCellCount = 100;
+        if (currentHourCount < 1) currentHourCount = 1;
+        if (currentHourCount > 24) currentHourCount = 24;
+
+        var data = JSON.parse(dataJson);
+
+        var surfaceData = [];
+        var allVoltages = [];
+
+        data.forEach(function(cellData, cellIndex) {
+          cellData.forEach(function(point) {
+            var xVal = point.x || (cellIndex % currentHourCount) + 1;
+            var yVal = point.y || Math.floor(cellIndex / currentHourCount) + 1;
+            var zVal = point.z || 0;
+            // Skip zero voltages (unused/missing data points)
+            if (zVal > 0) {
+              surfaceData.push([xVal, yVal, zVal]);
+              allVoltages.push(zVal);
+            }
+          });
+        });
+        
+        // Handle case where all data was filtered out
+        if (allVoltages.length === 0) {
+          allVoltages.push(2.0);
+          surfaceData.push([1, 1, 2.0]);
+        }
+
+        var minVoltage = Math.min.apply(null, allVoltages);
+        var maxVoltage = Math.max.apply(null, allVoltages);
+        
+        if (minVoltage > 1.5) minVoltage = 1.5;
+        if (maxVoltage < 2.5) maxVoltage = 2.5;
+        
+        var option = {
+          tooltip: {
+            show: true,
+            trigger: 'item',
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            borderColor: '#ddd',
+            borderWidth: 1,
+            textStyle: {
+              color: '#333',
+              fontSize: 13
+            },
+            padding: [10, 14],
+            formatter: function(params) {
+              var data = params.data;
+              var voltage = data[2];
+              var status = '';
+              var statusColor = '';
+              
+              if (voltage < 1.70) {
+                status = 'Critical';
+                statusColor = '#d73027';
+              } else if (voltage < 1.95) {
+                status = 'Warning';
+                statusColor = '#fee08b';
+              } else {
+                status = 'Normal';
+                statusColor = '#1a9850';
+              }
+              
+              return [
+                '<div style="font-weight: bold; margin-bottom: 6px;">Cell #' + data[1] + ' - H' + data[0] + '</div>',
+                '<div style="margin: 4px 0;">Voltage: <span style="font-size: 16px; font-weight: bold;">' + voltage.toFixed(3) + 'V</span></div>',
+                '<div style="margin: 4px 0;">Status: <span style="color: ' + statusColor + '; font-weight: bold;">' + status + '</span></div>',
+                '<div style="margin-top: 6px; font-size: 12px; color: #666;">' + params.seriesName + '</div>'
+              ].join('');
+            }
+          },
+          
+          visualMap: {
+            show: true,
+            top: '5%',
+            right: '2%',
+            width: 20,
+            height: '60%',
+            min: minVoltage,
+            max: maxVoltage,
+            calculable: true,
+            inRange: {
+              color: ['#d73027', '#fdae61', '#fee08b', '#91cf60', '#1a9850']
+            },
+            text: ['High', 'Low'],
+            textStyle: {
+              color: '#333',
+              fontSize: 11
+            }
+          },
+          
+          grid3D: {
+            boxWidth: 200,
+            boxDepth: 80,
+            boxHeight: 60,
+            viewControl: {
+              projection: 'perspective',
+              autoRotate: false,
+              autoRotateSpeed: 0,
+              rotateSensitivity: 1,
+              zoomSensitivity: 1,
+              panSensitivity: 1,
+              alpha: 30,
+              beta: 40,
+              distance: 300,
+              minDistance: 100,
+              maxDistance: 500
+            },
+            light: {
+              main: {
+                intensity: 1.2,
+                shadow: true,
+                alpha: 45,
+                beta: 45
+              },
+              ambient: {
+                intensity: 0.4
+              }
+            },
+            axisLine: {
+              lineStyle: {
+                color: '#888',
+                width: 1
+              }
+            },
+            axisLabel: {
+              textStyle: {
+                color: '#333',
+                fontSize: 11
+              }
+            },
+            axisPointer: {
+              show: true,
+              lineStyle: {
+                color: '#1976d2',
+                width: 2
+              }
+            }
+          },
+          
+          xAxis3D: {
+            type: 'value',
+            name: 'Hours',
+            nameLocation: 'end',
+            min: 1,
+            max: currentHourCount,
+            splitNumber: currentHourCount,
+            axisLine: {
+              lineStyle: {
+                color: '#888'
+              }
+            },
+            axisLabel: {
+              formatter: '{value}h',
+              textStyle: {
+                color: '#333'
+              }
+            },
+            axisPointer: {
+              show: true
+            }
+          },
+          
+          yAxis3D: {
+            type: 'value',
+            name: 'Cell #',
+            nameLocation: 'end',
+            min: 1,
+            max: currentCellCount,
+            splitNumber: currentCellCount,
+            axisLine: {
+              lineStyle: {
+                color: '#888'
+              }
+            },
+            axisLabel: {
+              textStyle: {
+                color: '#333'
+              }
+            },
+            axisPointer: {
+              show: true
+            }
+          },
+          
+          zAxis3D: {
+            type: 'value',
+            name: 'Voltage (V)',
+            nameLocation: 'end',
+            min: minVoltage,
+            max: maxVoltage,
+            inverse: true,
+            axisLine: {
+              lineStyle: {
+                color: '#888'
+              }
+            },
+            axisLabel: {
+              formatter: '{value}V',
+              textStyle: {
+                color: '#333'
+              }
+            },
+            axisPointer: {
+              show: true
+            }
+          },
+          
+          series: [{
+            type: 'bar3D',
+            name: 'Battery Discharge Curve',
+            data: surfaceData,
+            shading: 'lambert',
+            bevelSize: 0.5,
+            bevelSmoothness: 1,
+            label: {
+              show: false
+            },
+            itemStyle: {
+              opacity: 0.95,
+              borderWidth: 0.5,
+              borderColor: 'rgba(255, 255, 255, 0.3)'
+            },
+            emphasis: {
+              label: {
+                show: false
+              },
+              itemStyle: {
+                opacity: 1
+              }
+            }
+          }]
+        };
+        
+        chart.setOption(option, true);
+
+        // Wait for render to complete before notifying Flutter
+        chart.on('finished', function() {
+          // Wait 2 animation frames to ensure WebGL buffer is ready
+          requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+              isReady = true;
+              document.getElementById('loading').style.display = 'none';
+
+              if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+                window.flutter_inappwebview.callHandler('onGraphReady');
+              }
+            });
+          });
+        });
+
+      } catch (error) {
+        console.error('Error rendering 3D graph:', error);
+        document.getElementById('loading').innerHTML =
+          '<div style="color: red;">Graph Loading Failed<br>' + error.message + '</div>';
+      }
+    }
+    
+    function updateGraphData(dataJson) {
+      render3DGraph(dataJson);
+    }
+    
+    function setViewAngle(alpha, beta) {
+      if (!chart) return;
+      chart.setOption({
+        grid3D: {
+          viewControl: {
+            alpha: alpha,
+            beta: beta
+          }
+        }
+      });
+    }
+    
+    function setInvertedZ(invert) {
+      if (!chart) return;
+      chart.setOption({
+        zAxis3D: {
+          inverse: invert
+        }
+      });
+    }
+    
+    function setAxisRanges(cellCount, hourCount) {
+      currentCellCount = cellCount;
+      currentHourCount = hourCount;
+    }
+
+    function requestChartCapture(captureId, options) {
+      if (!chart) {
+        console.error('Chart not initialized');
+        if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+          window.flutter_inappwebview.callHandler('onGraphCaptureResult', {
+            captureId: captureId,
+            success: false,
+            error: 'CHART_NOT_INITIALIZED'
+          });
+        }
+        return 'started';
+      }
+
+      // Set view angle for capture
+      var alpha = options && options.alpha !== undefined ? options.alpha : 45;
+      var beta = options && options.beta !== undefined ? options.beta : 45;
+
+      try {
+        setViewAngle(alpha, beta);
+        setInvertedZ(true);
+      } catch(e) {
+        console.error('Error setting view angle:', e);
+        if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+          window.flutter_inappwebview.callHandler('onGraphCaptureResult', {
+            captureId: captureId,
+            success: false,
+            error: 'VIEW_ANGLE_FAILED: ' + e.message
+          });
+        }
+        return 'started';
+      }
+
+      // Wait for render to settle, then capture
+      setTimeout(function() {
+        try {
+          if (!chart) {
+            if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+              window.flutter_inappwebview.callHandler('onGraphCaptureResult', {
+                captureId: captureId,
+                success: false,
+                error: 'CHART_LOST'
+              });
+            }
+            return;
+          }
+
+          var url = chart.getDataURL({
+            type: 'png',
+            pixelRatio: 2,
+            backgroundColor: '#fff'
+          });
+
+          // Restore original view
+          setViewAngle(30, 40);
+          setInvertedZ(false);
+
+          if (!url || url.length < 100) {
+            if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+              window.flutter_inappwebview.callHandler('onGraphCaptureResult', {
+                captureId: captureId,
+                success: false,
+                error: 'INVALID_DATA_URL'
+              });
+            }
+          } else {
+            if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+              window.flutter_inappwebview.callHandler('onGraphCaptureResult', {
+                captureId: captureId,
+                success: true,
+                data: url
+              });
+            }
+          }
+        } catch(e) {
+          console.error('Error getting chart image: ', e);
+          if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+            window.flutter_inappwebview.callHandler('onGraphCaptureResult', {
+              captureId: captureId,
+              success: false,
+              error: 'EXCEPTION: ' + e.message
+            });
+          }
+        }
+      }, 1500);
+
+      return 'started';
+    }
+
+    window.addEventListener('resize', function() {
+      if (chart) {
+        chart.resize();
+      }
+    });
+
+    window.addEventListener('load', function() {
+      initChart();
+    });
+
+    window.render3DGraph = render3DGraph;
+    window.updateGraphData = updateGraphData;
+    window.setViewAngle = setViewAngle;
+    window.setInvertedZ = setInvertedZ;
+    window.setAxisRanges = setAxisRanges;
+    window.requestChartCapture = requestChartCapture;
+
+  </script>
+</body>
+</html>
